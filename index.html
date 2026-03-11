@@ -95,7 +95,28 @@
 </div>
 
 
-            <div class="text-5xl font-black italic text-gray-600">VS</div>
+            <div class="glass p-12 rounded-[3rem] relative flex flex-col md:flex-row justify-around items-center gap-12 border-b-8 border-cyan-500">
+    
+    <div id="player-you" class="...">
+        </div>
+
+    <div id="action-center" class="flex flex-col items-center justify-center z-30">
+        <div id="vs-text" class="text-5xl font-black text-slate-700 italic">VS</div>
+        
+        <button id="btn-reveal" class="hidden-view btn-primary px-10 py-4 rounded-full font-black tracking-widest uppercase shadow-2xl animate-bounce">
+            🚀 LIHAT HASIL
+        </button>
+    </div>
+
+    <div id="player-opponent" class="...">
+        </div>
+
+    <div id="battle-loading" class="hidden-view absolute inset-0 bg-slate-900/90 z-20 flex flex-col items-center justify-center">
+        <div class="w-20 h-20 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
+        <h2 class="mt-6 text-2xl font-black italic animate-pulse">MENGANALISA SERANGAN...</h2>
+    </div>
+</div>
+
 
             <div id="player-opponent" class="text-center p-8 glass rounded-3xl w-full md:w-1/3">
                 <p class="text-gray-400 mb-2">LAWAN</p>
