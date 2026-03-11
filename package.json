@@ -1,0 +1,12 @@
+{
+  "name": "suit-multiplayer-online",
+  "version": "1.0.0",
+  "description": "Real-time Suit Game with Firebase",
+  "main": "index.html",
+  "scripts": {
+    "start": "serve ."
+  },
+  "dependencies": {
+    "firebase": "^10.10.0"
+  }
+}
