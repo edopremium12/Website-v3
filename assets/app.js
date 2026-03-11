@@ -199,8 +199,10 @@ document.getElementById('btn-confirm-choice').onclick = async () => {
 function listenGame() {
     onValue(ref(db, `rooms/${currentRoomId}`), (snap) => {
         const room = snap.val();
+        
+        // 1. Cek jika room masih ada
         if (!room) {
-            alert("Room Expired (Owner Left)!");
+            alert("Room telah ditutup oleh Host.");
             window.location.reload();
             return;
         }
@@ -209,25 +211,75 @@ function listenGame() {
         const me = isP1 ? room.player1 : room.player2;
         const op = isP1 ? room.player2 : room.player1;
 
+        // 2. Update Informasi Dasar Player
         document.getElementById('player-you-name').innerText = me.name;
+        // Tampilkan emoji pilihan kita sendiri (tetap terlihat setelah klik OK)
         document.getElementById('your-choice-display').innerText = me.choice ? emoji(me.choice) : (selectedTempChoice ? emoji(selectedTempChoice) : "?");
 
+        // 3. Logika Jika Ada Lawan
         if (op) {
             document.getElementById('player-opponent-name').innerText = op.name;
-            document.getElementById('opponent-status').innerText = op.choice ? "READY" : "CHOOSING...";
-            if (me.choice && op.choice && !battleProcessed) {
-                battleProcessed = true;
-                document.getElementById('battle-loading').classList.remove('hidden-view');
-                setTimeout(() => {
-                    document.getElementById('battle-loading').classList.add('hidden-view');
-                    document.getElementById('opponent-choice-display').innerText = emoji(op.choice);
-                    document.getElementById('opponent-choice-display').classList.remove('grayscale', 'opacity-30');
-                    calculateWinner(me.choice, op.choice);
-                }, 2000);
+            
+            // Status visual apakah lawan sudah tekan OK atau belum
+            if (op.choice) {
+                document.getElementById('opponent-status').innerText = "SUDAH MEMILIH ✅";
+                document.getElementById('opponent-status').className = "mt-4 text-[10px] py-1 px-3 bg-green-500/20 text-green-400 rounded-full font-bold";
+            } else {
+                document.getElementById('opponent-status').innerText = "SEDANG MEMILIH...";
+                document.getElementById('opponent-status').className = "mt-4 text-[10px] py-1 px-3 bg-red-500/10 text-red-500 rounded-full font-bold animate-pulse";
             }
+
+            // 4. LOGIKA TOMBOL "LIHAT HASIL" (REVEAL)
+            // Muncul hanya jika kedua belah pihak sudah menekan OK (me.choice & op.choice ada)
+            // Dan pertempuran belum diproses (battleProcessed === false)
+            if (me.choice && op.choice && !battleProcessed) {
+                document.getElementById('vs-text').classList.add('hidden-view');
+                document.getElementById('btn-reveal').classList.remove('hidden-view');
+            } else if (!battleProcessed) {
+                // Jika salah satu belum OK, tetap tampilkan teks VS
+                document.getElementById('vs-text').classList.remove('hidden-view');
+                document.getElementById('btn-reveal').classList.add('hidden-view');
+            }
+        } else {
+            // Jika lawan belum masuk room
+            document.getElementById('player-opponent-name').innerText = "Menunggu Lawan...";
+            document.getElementById('opponent-status').innerText = "WAITING...";
+            document.getElementById('btn-reveal').classList.add('hidden-view');
         }
     });
 }
+
+// Tambahkan Event Listener untuk tombol Reveal di luar fungsi listenGame (hanya satu kali)
+document.getElementById('btn-reveal').onclick = async () => {
+    // Ambil data terbaru dari database
+    const roomSnap = await get(ref(db, `rooms/${currentRoomId}`));
+    const room = roomSnap.val();
+    
+    if (!room) return;
+
+    const isP1 = room.player1.uid === currentUser.uid;
+    const me = isP1 ? room.player1 : room.player2;
+    const op = isP1 ? room.player2 : room.player1;
+
+    // Kunci agar tidak klik dua kali
+    battleProcessed = true;
+
+    // Sembunyikan tombol Reveal dan jalankan animasi loading
+    document.getElementById('btn-reveal').classList.add('hidden-view');
+    document.getElementById('battle-loading').classList.remove('hidden-view');
+
+    // Durasi animasi "Menganalisa Serangan" (2 detik)
+    setTimeout(() => {
+        document.getElementById('battle-loading').classList.add('hidden-view');
+        
+        // Tampilkan pilihan lawan (Buka kartu)
+        document.getElementById('opponent-choice-display').innerText = emoji(op.choice);
+        document.getElementById('opponent-choice-display').classList.remove('grayscale', 'opacity-30');
+        
+        // Jalankan fungsi hitung menang/kalah
+        calculateWinner(me.choice, op.choice);
+    }, 2000);
+};
 
 function emoji(c) { return c === 'batu' ? '✊' : c === 'kertas' ? '✋' : '✌️'; }
 
