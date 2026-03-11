@@ -1,7 +1,8 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js";
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.10.0/firebase-auth.js";
-import { getDatabase, ref, set, push, onValue, update, remove, get } from "https://www.gstatic.com/firebasejs/10.10.0/firebase-database.js";
+import { getDatabase, ref, set, push, onValue, update, remove, get, query, orderByChild, limitToLast, onDisconnect, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.10.0/firebase-database.js";
 
+// Konfigurasi Firebase Anda
 const firebaseConfig = {
     apiKey: "AIzaSyAgp27hYSZ433dBtrVDwmatt5xCJ6EOt9U",
     authDomain: "cayang.firebaseapp.com",
@@ -16,30 +17,59 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getDatabase(app);
 
-// State Global
+// STATE GLOBAL
 let currentUser = null;
+let userData = null;
 let currentRoomId = null;
 let isRegisterMode = false;
+let battleProcessed = false;
+let lastKnownLevel = null;
+let lastKnownRank = null;
 
-// DOM Elements
-const views = {
-    auth: document.getElementById('view-auth'),
-    dashboard: document.getElementById('view-dashboard'),
-    game: document.getElementById('view-game')
+const views = { 
+    auth: document.getElementById('view-auth'), 
+    dashboard: document.getElementById('view-dashboard'), 
+    game: document.getElementById('view-game') 
 };
 
-// --- AUTH LOGIC ---
-const toggleAuth = () => {
+// --- FUNGSI NOTIFIKASI & SUARA ---
+async function requestNotificationPermission() {
+    if ("Notification" in window && Notification.permission === "default") {
+        await Notification.requestPermission();
+    }
+}
+
+function sendBrowserNotif(title, body) {
+    if (Notification.permission === "granted") {
+        new Notification(title, {
+            body: body,
+            icon: "https://cdn-icons-png.flaticon.com/512/1041/1041916.png"
+        });
+    }
+}
+
+function playSound(id) {
+    const snd = document.getElementById(id);
+    if (snd) {
+        snd.currentTime = 0;
+        snd.play().catch(() => console.log("Interaksi user diperlukan untuk memutar suara."));
+    }
+}
+
+// --- NAVIGASI & AUTH ---
+function showView(viewId) {
+    Object.values(views).forEach(v => v.classList.add('hidden-view'));
+    views[viewId].classList.remove('hidden-view');
+}
+
+document.getElementById('auth-toggle-btn').onclick = () => {
     isRegisterMode = !isRegisterMode;
-    document.getElementById('auth-title').innerText = isRegisterMode ? "Daftar Arena" : "Login Arena";
+    document.getElementById('auth-subtitle').innerText = isRegisterMode ? "Buat akun kompetitor baru" : "Masuk untuk memulai pertempuran";
     document.getElementById('register-fields').classList.toggle('hidden-view');
     document.getElementById('confirm-pass-field').classList.toggle('hidden-view');
-    document.getElementById('btn-main-auth').innerText = isRegisterMode ? "Daftar Akun" : "Masuk";
-    document.getElementById('auth-toggle-text').innerText = isRegisterMode ? "Sudah punya akun?" : "Belum punya akun?";
-    document.getElementById('auth-toggle-btn').innerText = isRegisterMode ? "Login" : "Daftar Sekarang";
+    document.getElementById('btn-main-auth').innerText = isRegisterMode ? "Daftar Akun" : "Masuk Sekarang";
+    document.getElementById('auth-toggle-btn').innerText = isRegisterMode ? "Login" : "Daftar";
 };
-
-document.getElementById('auth-toggle-btn').onclick = (e) => { e.preventDefault(); toggleAuth(); };
 
 document.getElementById('btn-main-auth').onclick = async () => {
     const email = document.getElementById('auth-email').value;
@@ -49,194 +79,224 @@ document.getElementById('btn-main-auth').onclick = async () => {
         const name = document.getElementById('reg-name').value;
         const city = document.getElementById('reg-city').value;
         const confirm = document.getElementById('reg-confirm-pass').value;
+        if (!name || !city || pass !== confirm) return alert("Data tidak valid!");
 
-        if (pass !== confirm) return alert("Password tidak cocok!");
-        
         try {
             const res = await createUserWithEmailAndPassword(auth, email, pass);
-            await set(ref(db, 'users/' + res.user.uid), {
-                name, city, email, wins: 0
-            });
-            alert("Berhasil Daftar!");
+            await set(ref(db, 'users/' + res.user.uid), { name, city, email, wins: 0, xp: 0, points: 0, level: 1 });
         } catch (err) { alert(err.message); }
     } else {
         signInWithEmailAndPassword(auth, email, pass).catch(err => alert(err.message));
     }
 };
 
-document.getElementById('btn-logout').onclick = () => signOut(auth);
-
-// --- NAVIGATION & OBSERVER ---
 onAuthStateChanged(auth, (user) => {
     if (user) {
         currentUser = user;
-        showView('dashboard');
         loadUserData();
         listenRooms();
+        requestNotificationPermission();
+        showView('dashboard');
     } else {
         currentUser = null;
         showView('auth');
     }
 });
 
-function showView(viewId) {
-    Object.values(views).forEach(v => v.classList.add('hidden-view'));
-    views[viewId].classList.remove('hidden-view');
-}
+document.getElementById('btn-logout').onclick = () => signOut(auth);
 
+// --- LOAD DATA USER ---
 async function loadUserData() {
     onValue(ref(db, `users/${currentUser.uid}`), (snap) => {
-        const data = snap.val();
-        if (data) {
-            document.getElementById('user-display-name').innerText = data.name;
-            document.getElementById('user-wins').innerText = data.wins;
+        userData = snap.val();
+        if (userData) {
+            if (lastKnownLevel !== null && userData.level > lastKnownLevel) {
+                playSound('snd-level-up');
+                sendBrowserNotif("LEVEL UP! 🚀", `Selamat ${userData.name}! Kamu naik ke Level ${userData.level}!`);
+            }
+            lastKnownLevel = userData.level;
+            
+            document.getElementById('user-display-name').innerText = userData.name;
+            document.getElementById('user-wins').innerText = userData.wins;
+            document.getElementById('user-level').innerText = userData.level;
+            document.getElementById('user-points').innerText = userData.points;
+            document.getElementById('user-xp').innerText = userData.xp;
+            document.getElementById('xp-bar').style.width = (userData.xp % 100) + "%";
         }
     });
 }
 
-// --- ROOM LOGIC ---
+// --- LOBBY & ROOM LOGIC ---
 document.getElementById('btn-create-room').onclick = async () => {
-    const name = document.getElementById('room-name').value || "Battle Room";
+    const name = document.getElementById('room-name').value || "BATTLE ARENA";
     const pin = document.getElementById('room-pin').value;
-    
     const newRoomRef = push(ref(db, 'rooms'));
     const roomId = newRoomRef.key;
 
+    // AUTO-EXPIRED: Hapus room jika pembuat disconnect
+    onDisconnect(newRoomRef).remove();
+
     await set(newRoomRef, {
-        id: roomId,
-        name: name,
-        pin: pin || null,
-        status: 'waiting',
-        player1: { uid: currentUser.uid, name: document.getElementById('user-display-name').innerText, choice: null },
+        id: roomId, name: name.toUpperCase(), pin: pin || null, status: 'waiting', owner: currentUser.uid,
+        player1: { uid: currentUser.uid, name: userData.name, choice: null },
         player2: null
     });
-
     joinRoomLogic(roomId);
 };
 
 function listenRooms() {
-    const roomListDiv = document.getElementById('room-list');
     onValue(ref(db, 'rooms'), (snap) => {
-        roomListDiv.innerHTML = "";
-        snap.forEach((child) => {
+        const list = document.getElementById('room-list');
+        list.innerHTML = "";
+        snap.forEach(child => {
             const room = child.val();
-            if (room.status === 'finished') return;
-
-            const isPrivate = room.pin ? "🔒 Private" : "🔓 Public";
             const item = document.createElement('div');
-            item.className = "flex justify-between items-center glass p-4 rounded-xl border border-gray-700 hover:border-cyan-500 transition cursor-pointer";
-            item.innerHTML = `
-                <div>
-                    <p class="font-bold">${room.name}</p>
-                    <p class="text-xs text-gray-400">${isPrivate} | Player: ${room.player2 ? '2/2' : '1/2'}</p>
-                </div>
-                <button class="bg-cyan-600 px-4 py-1 rounded text-sm font-bold">JOIN</button>
-            `;
-            item.onclick = () => promptJoin(room);
-            roomListDiv.appendChild(item);
+            item.className = "flex justify-between items-center glass p-5 rounded-2xl hover:border-cyan-500 cursor-pointer transition";
+            item.innerHTML = `<div><h4 class="font-black text-sm">${room.name} ${room.pin ? '🔒' : '🔓'}</h4><p class="text-[10px] text-gray-400">HOST: ${room.player1.name}</p></div><button class="bg-cyan-600 px-4 py-2 rounded-xl text-[10px] font-black">JOIN</button>`;
+            item.onclick = () => {
+                if (room.pin && prompt("Masukkan PIN:") !== room.pin) return alert("PIN Salah!");
+                joinExistingRoom(room);
+            };
+            list.appendChild(item);
         });
     });
 }
 
-async function promptJoin(room) {
-    if (room.player1.uid === currentUser.uid) return joinRoomLogic(room.id);
-    if (room.player2) return alert("Room Penuh!");
-
-    if (room.pin) {
-        const inputPin = prompt("Masukkan PIN Room:");
-        if (inputPin !== room.pin) return alert("PIN Salah!");
+async function joinExistingRoom(room) {
+    if (room.player1.uid !== currentUser.uid && !room.player2) {
+        await update(ref(db, `rooms/${room.id}`), {
+            player2: { uid: currentUser.uid, name: userData.name, choice: null },
+            status: 'playing'
+        });
     }
-
-    await update(ref(db, `rooms/${room.id}`), {
-        player2: { uid: currentUser.uid, name: document.getElementById('user-display-name').innerText, choice: null },
-        status: 'playing'
-    });
     joinRoomLogic(room.id);
 }
 
 function joinRoomLogic(roomId) {
     currentRoomId = roomId;
+    battleProcessed = false;
     showView('game');
-    document.getElementById('game-room-title').innerText = "ROOM: " + roomId.substring(0,6);
     listenGame();
+    listenChat();
 }
 
-// --- GAMEPLAY ENGINE ---
+// --- GAMEPLAY & CHAT ---
+function listenChat() {
+    onValue(ref(db, `rooms/${currentRoomId}/chat`), (snap) => {
+        const chatDiv = document.getElementById('chat-messages');
+        chatDiv.innerHTML = "";
+        snap.forEach(c => {
+            const m = c.val();
+            chatDiv.innerHTML += `<div class="text-[11px] border-l-2 border-white/10 pl-2 py-1"><span class="text-blue-400 font-bold">${m.sender}:</span> ${m.text}</div>`;
+        });
+        chatDiv.scrollTop = chatDiv.scrollHeight;
+    });
+}
+
+document.getElementById('btn-send-chat').onclick = () => {
+    const inp = document.getElementById('chat-input');
+    if (!inp.value) return;
+    push(ref(db, `rooms/${currentRoomId}/chat`), { sender: userData.name, text: inp.value });
+    inp.value = "";
+};
+
 function listenGame() {
     onValue(ref(db, `rooms/${currentRoomId}`), (snap) => {
         const room = snap.val();
-        if (!room) return;
+        if (!room) {
+            alert("Room Expired!");
+            window.location.reload();
+            return;
+        }
 
         const isP1 = room.player1.uid === currentUser.uid;
         const me = isP1 ? room.player1 : room.player2;
-        const opponent = isP1 ? room.player2 : room.player1;
+        const op = isP1 ? room.player2 : room.player1;
 
         document.getElementById('player-you-name').innerText = me.name;
         document.getElementById('your-choice-display').innerText = me.choice ? emoji(me.choice) : "?";
 
-        if (opponent) {
-            document.getElementById('player-opponent-name').innerText = opponent.name;
-            document.getElementById('opponent-status').innerText = opponent.choice ? "Sudah Memilih" : "Sedang Memilih...";
-            
-            if (me.choice && opponent.choice) {
-                document.getElementById('opponent-choice-display').innerText = emoji(opponent.choice);
-                calculateWinner(me.choice, opponent.choice, isP1);
-            } else {
-                document.getElementById('opponent-choice-display').innerText = "?";
-                document.getElementById('result-overlay').classList.add('hidden-view');
+        if (op) {
+            document.getElementById('player-opponent-name').innerText = op.name;
+            document.getElementById('opponent-status').innerText = op.choice ? "READY" : "CHOOSING...";
+            if (me.choice && op.choice && !battleProcessed) {
+                battleProcessed = true;
+                document.getElementById('battle-loading').classList.remove('hidden-view');
+                setTimeout(() => {
+                    document.getElementById('battle-loading').classList.add('hidden-view');
+                    document.getElementById('opponent-choice-display').innerText = emoji(op.choice);
+                    document.getElementById('opponent-choice-display').classList.remove('grayscale', 'opacity-30');
+                    calculateWinner(me.choice, op.choice);
+                }, 2000);
             }
         }
     });
 }
 
-window.makeChoice = async (choice) => {
-    const roomRef = ref(db, `rooms/${currentRoomId}`);
-    const snap = await get(roomRef);
-    const room = snap.val();
+window.makeChoice = async (c) => {
+    const roomSnap = await get(ref(db, `rooms/${currentRoomId}`));
+    const room = roomSnap.val();
     const path = room.player1.uid === currentUser.uid ? 'player1/choice' : 'player2/choice';
-    await update(roomRef, { [path]: choice });
+    await update(ref(db, `rooms/${currentRoomId}`), { [path]: c });
 };
 
-function emoji(choice) {
-    if (choice === 'batu') return '✊';
-    if (choice === 'kertas') return '✋';
-    if (choice === 'gunting') return '✌️';
-    return '?';
-}
+function emoji(c) { return c === 'batu' ? '✊' : c === 'kertas' ? '✋' : '✌️'; }
 
-async function calculateWinner(myChoice, opChoice, isP1) {
-    let result = "";
-    if (myChoice === opChoice) result = "SERI!";
-    else if (
-        (myChoice === 'batu' && opChoice === 'gunting') ||
-        (myChoice === 'kertas' && opChoice === 'batu') ||
-        (myChoice === 'gunting' && opChoice === 'kertas')
-    ) {
-        result = "KAMU MENANG!";
-        // Update win limit in user data (only once)
-        const userRef = ref(db, `users/${currentUser.uid}/wins`);
-        const winSnap = await get(userRef);
-        await set(userRef, (winSnap.val() || 0) + 1);
+async function calculateWinner(myC, opC) {
+    let res = ""; 
+    let isWin = false; 
+    let isDraw = myC === opC;
+
+    if (isDraw) res = "SERI!";
+    else if ((myC === 'batu' && opC === 'gunting') || (myC === 'kertas' && opC === 'batu') || (myC === 'gunting' && opC === 'kertas')) {
+        res = "MENANG!"; isWin = true; playSound('snd-win');
     } else {
-        result = "KAMU KALAH!";
+        res = "KALAH!"; playSound('snd-lose');
     }
 
-    document.getElementById('game-result-text').innerText = result;
+    document.getElementById('game-result-text').innerText = res;
+    document.getElementById('game-result-text').className = `text-6xl font-black italic mb-4 ${isDraw ? 'text-gray-400' : (isWin ? 'text-cyan-400' : 'text-red-500')}`;
     document.getElementById('result-overlay').classList.remove('hidden-view');
+
+    const xpGain = isWin ? 50 : (isDraw ? 20 : 10);
+    const newXP = userData.xp + xpGain;
+    await update(ref(db, `users/${currentUser.uid}`), {
+        xp: newXP,
+        points: userData.points + (isWin ? 100 : 20),
+        wins: isWin ? userData.wins + 1 : userData.wins,
+        level: Math.floor(newXP / 100) + 1
+    });
 }
 
 window.resetGame = async () => {
-    await update(ref(db, `rooms/${currentRoomId}`), {
-        'player1/choice': null,
-        'player2/choice': null
-    });
+    battleProcessed = false;
+    document.getElementById('opponent-choice-display').classList.add('grayscale', 'opacity-30');
+    await update(ref(db, `rooms/${currentRoomId}`), { 'player1/choice': null, 'player2/choice': null });
 };
 
-document.getElementById('btn-leave-room').onclick = async () => {
-    if(confirm("Keluar dari room?")) {
-        // Logika sederhana: hapus room jika player 1 keluar
-        await remove(ref(db, `rooms/${currentRoomId}`));
-        currentRoomId = null;
-        showView('dashboard');
+document.getElementById('btn-leave-room').onclick = () => window.location.reload();
+
+// --- LEADERBOARD ---
+window.toggleLeaderboard = () => {
+    const m = document.getElementById('modal-leaderboard');
+    m.classList.toggle('hidden-view');
+    if (!m.classList.contains('hidden-view')) {
+        const q = query(ref(db, 'users'), orderByChild('points'), limitToLast(10));
+        onValue(q, (snap) => {
+            const list = document.getElementById('leaderboard-list');
+            list.innerHTML = "";
+            let arr = [];
+            snap.forEach(c => { const v = c.val(); v.uid = c.key; arr.push(v); });
+            arr.reverse().forEach((p, i) => {
+                if (p.uid === currentUser.uid && (i + 1) <= 3 && lastKnownRank !== (i + 1)) {
+                    sendBrowserNotif("TOP GLOBAL! 🏆", `Kamu sekarang peringkat #${i + 1}!`);
+                    lastKnownRank = i + 1;
+                }
+                list.innerHTML += `<div class="flex justify-between items-center glass p-5 rounded-2xl border-l-4 ${i === 0 ? 'border-yellow-500' : 'border-cyan-500'}">
+                    <div class="flex items-center gap-4"><span class="text-xl font-black italic">#${i + 1}</span>
+                    <div><p class="font-bold text-sm">${p.name}</p><p class="text-[10px] text-gray-500">Lv.${p.level}</p></div></div>
+                    <p class="font-black text-yellow-500">${p.points} PTS</p></div>`;
+            });
+        });
     }
 };
