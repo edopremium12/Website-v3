@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "name": "suit-multiplayer",
+  "framework": null,
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ],
+  "cleanUrls": true
+}
